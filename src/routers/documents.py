@@ -6,10 +6,11 @@ Provides REST API endpoints for:
 - Processing raw text content
 - Querying documents
 - Managing collections
+- Multi-agent document processing with classification, extraction, and routing
 """
 
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from services.document_service import (
@@ -22,6 +23,8 @@ from services.document_service import (
     get_collection_info as get_collection_info_service,
     DOCUMENT_TOOLS,
 )
+from services.file_type_service import detect_file_type, FileTypeInfo
+from agents.orchestrator import process_document_with_agents, ProcessingResult
 
 router = APIRouter()
 
@@ -250,3 +253,183 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e)
         }
+
+
+# ============================================================
+# Multi-Agent Processing Endpoints
+# ============================================================
+
+class AgentProcessRequest(BaseModel):
+    """Request model for multi-agent document processing."""
+    content: str = Field(..., description="The text content to process")
+    filename: str = Field(default="document.txt", description="Filename for context")
+    store_in_vectordb: bool = Field(default=True, description="Whether to store in vector database")
+
+
+class AgentProcessResponse(BaseModel):
+    """Response from multi-agent processing."""
+    success: bool
+    filename: str
+    file_type: Optional[str] = None
+    document_type: Optional[str] = None
+    routed_to: List[str] = Field(default_factory=list)
+    summary: Optional[str] = None
+    notifications_sent: bool = False
+    processing_time_ms: Optional[float] = None
+    error: Optional[str] = None
+
+
+@router.post("/process-with-agents", response_model=AgentProcessResponse)
+async def process_with_agents(
+    request: AgentProcessRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Process a document using the multi-agent workflow.
+    
+    This endpoint triggers the full IDP pipeline:
+    1. **Classification**: Detect file type and classify document content
+    2. **Extraction**: Extract structured data based on document type
+    3. **Routing**: Determine target departments and send notifications
+    
+    The multi-agent system uses:
+    - Classification Agent for file/content analysis
+    - Extraction Agent for data extraction
+    - Routing Agent for department routing
+    - Supervisor Agent to orchestrate the workflow
+    """
+    try:
+        # Optionally store in vector database in background
+        if request.store_in_vectordb:
+            background_tasks.add_task(
+                process_text,
+                content=request.content,
+                title=request.filename,
+                collection_name="processed_documents"
+            )
+        
+        # Run multi-agent processing
+        result = await process_document_with_agents(
+            filename=request.filename,
+            text_content=request.content
+        )
+        
+        return AgentProcessResponse(
+            success=result.success,
+            filename=result.filename,
+            file_type=result.file_type,
+            document_type=result.document_type,
+            routed_to=result.routed_to,
+            summary=result.summary,
+            notifications_sent=result.notifications_sent,
+            processing_time_ms=result.processing_time_ms,
+            error=result.error
+        )
+        
+    except Exception as e:
+        return AgentProcessResponse(
+            success=False,
+            filename=request.filename,
+            error=str(e)
+        )
+
+
+@router.post("/upload-and-process", response_model=AgentProcessResponse)
+async def upload_and_process_with_agents(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Upload a document and process it with the multi-agent system.
+    
+    This combines file upload with intelligent processing:
+    1. Uploads and extracts text from the document
+    2. Runs multi-agent classification, extraction, and routing
+    3. Stores the document in the vector database
+    4. Sends notifications to relevant departments
+    
+    Supports: PDF, DOCX, TXT, XLSX, PPTX, and more.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+    
+    # Read file content
+    content = await file.read()
+    
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file provided")
+    
+    try:
+        # First, store in vector database
+        storage_result = await process_uploaded_file(
+            file_content=content,
+            filename=file.filename,
+            collection_name="processed_documents"
+        )
+        
+        if not storage_result.success:
+            return AgentProcessResponse(
+                success=False,
+                filename=file.filename,
+                error=f"Failed to process file: {storage_result.message}"
+            )
+        
+        # Get file type info
+        file_info = detect_file_type(file.filename, content)
+        
+        # For now, we need to extract text content for agent processing
+        # This is simplified - in production would use proper text extraction
+        text_content = f"Document: {file.filename}\nType: {file_info.description}\n"
+        text_content += f"Nodes created: {storage_result.num_nodes}\n"
+        
+        # Run multi-agent processing
+        result = await process_document_with_agents(
+            filename=file.filename,
+            text_content=text_content,
+            file_content=content
+        )
+        
+        return AgentProcessResponse(
+            success=result.success,
+            filename=result.filename,
+            file_type=file_info.extension,
+            document_type=result.document_type,
+            routed_to=result.routed_to,
+            summary=result.summary,
+            notifications_sent=result.notifications_sent,
+            processing_time_ms=result.processing_time_ms,
+            error=result.error
+        )
+        
+    except Exception as e:
+        return AgentProcessResponse(
+            success=False,
+            filename=file.filename,
+            error=str(e)
+        )
+
+
+@router.get("/file-types")
+async def get_supported_file_types():
+    """
+    Get list of supported file types and their categories.
+    """
+    from services.file_type_service import EXTENSION_CATEGORIES, FileCategory
+    
+    categories = {}
+    for ext, (category, description, requires_ocr, requires_parser) in EXTENSION_CATEGORIES.items():
+        cat_name = category.value
+        if cat_name not in categories:
+            categories[cat_name] = []
+        categories[cat_name].append({
+            "extension": ext,
+            "description": description,
+            "requires_ocr": requires_ocr,
+            "requires_specialized_parser": requires_parser
+        })
+    
+    return {
+        "categories": categories,
+        "note": "CAD files require specialized parsers (placeholder)"
+    }
+
