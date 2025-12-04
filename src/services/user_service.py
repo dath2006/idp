@@ -1,7 +1,4 @@
-# src/services/user_service.py
-# This module talks to the database/models/external APIs
 
-# pip install -qU "langchain[anthropic]" to call the model
 
 from langchain.agents import create_agent
 import os
