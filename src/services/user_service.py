@@ -20,9 +20,6 @@ client = MultiServerMCPClient(
 )
 
 
-os.environ["GOOGLE_API_KEY"] = "AIzaSyAuaiLQCAG_sKD4x5aWwtadLuxSzc1_1vQ"
-
-os.environ["GROQ_API_KEY"] = "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"
 
 model = init_chat_model("google_genai:gemini-2.5-flash")
 
