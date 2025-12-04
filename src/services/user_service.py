@@ -1,11 +1,13 @@
-
-
 from langchain.agents import create_agent
 import os
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient  
 from langchain_mcp_adapters.tools import load_mcp_tools
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 client = MultiServerMCPClient(
     {
@@ -16,9 +18,18 @@ client = MultiServerMCPClient(
     }
 )
 
+# Lazy model initialization
+_model = None
 
-
-model = init_chat_model("google_genai:gemini-2.5-flash")
+def get_model():
+    """Lazily initialize the chat model only when needed."""
+    global _model
+    if _model is None:
+        api_key = os.getenv("GOOGLE_API_KEY", "")
+        if api_key:
+            os.environ["GOOGLE_API_KEY"] = api_key
+        _model = init_chat_model("google_genai:gemini-2.5-flash")
+    return _model
 
 
 def get_weather(city: str) -> str:
@@ -43,7 +54,7 @@ async def get_all_users(msg: str):
         tools = await load_mcp_tools(session)
     # tools = await client.get_tools()
         agent = create_agent(
-        model,
+        get_model(),
         tools= tools,
         system_prompt = """You are a helpful assistant with expertise in web automation.
 
