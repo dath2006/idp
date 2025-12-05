@@ -364,13 +364,13 @@ class PrivacyOrchestrator:
             "team_status": {team: "pending" for team in assigned_teams}
         })
         
-        # Send WebSocket notifications to all assigned teams
-        await self._notify_teams_document_created(
-            document_id=document_id,
-            teams=assigned_teams,
-            title=doc.filename,
-            categories=classification.category_names
-        )
+        # Send WebSocket notifications to all assigned teams - REMOVED
+        # await self._notify_teams_document_created(
+        #     document_id=document_id,
+        #     teams=assigned_teams,
+        #     title=doc.filename,
+        #     categories=classification.category_names
+        # )
         
         return PrivacyProcessingResult(
             success=True,
@@ -384,32 +384,33 @@ class PrivacyOrchestrator:
             status="routed"
         )
     
-    async def _notify_teams_document_created(
-        self,
-        document_id: str,
-        teams: List[str],
-        title: str,
-        categories: List[str]
-    ) -> None:
-        """Send WebSocket notifications to all assigned teams."""
-        try:
-            from services.websocket_service import (
-                manager,
-                create_document_created_notification
-            )
-            
-            # Send notification to each team
-            for team in teams:
-                notification = create_document_created_notification(
-                    document_id=document_id,
-                    team=team,
-                    title=title,
-                    categories=categories
-                )
-                await manager.broadcast_to_team(team, notification)
-                
-        except Exception as e:
-            print(f"⚠️ WebSocket notification failed: {e}")
+    # WebSocket notification method - REMOVED
+    # async def _notify_teams_document_created(
+    #     self,
+    #     document_id: str,
+    #     teams: List[str],
+    #     title: str,
+    #     categories: List[str]
+    # ) -> None:
+    #     """Send WebSocket notifications to all assigned teams."""
+    #     try:
+    #         from services.websocket_service import (
+    #             manager,
+    #             create_document_created_notification
+    #         )
+    #         
+    #         # Send notification to each team
+    #         for team in teams:
+    #             notification = create_document_created_notification(
+    #                 document_id=document_id,
+    #                 team=team,
+    #                 title=title,
+    #                 categories=categories
+    #             )
+    #             await manager.broadcast_to_team(team, notification)
+    #             
+    #     except Exception as e:
+    #         print(f"⚠️ WebSocket notification failed: {e}")
     
     def _category_to_department(
         self, 

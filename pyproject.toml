@@ -47,4 +47,5 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "jose>=1.0.0",
     "python-jose[cryptography]>=3.5.0",
+    "bcrypt>=5.0.0",
 ]

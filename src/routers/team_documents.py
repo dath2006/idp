@@ -342,15 +342,15 @@ async def take_document_action(
     )
     action_id = await mongodb.create_action(action)
     
-    # Send WebSocket notification
-    await _notify_action_performed(
-        document_id=document_id,
-        team=team_id,
-        action_type=action_type.value,
-        performed_by=user.name,
-        new_status=action_type.value if action_type in [TeamActionType.APPROVE, TeamActionType.REJECT] else None,
-        forward_to_team=action_request.forward_to_team
-    )
+    # Send WebSocket notification - REMOVED
+    # await _notify_action_performed(
+    #     document_id=document_id,
+    #     team=team_id,
+    #     action_type=action_type.value,
+    #     performed_by=user.name,
+    #     new_status=action_type.value if action_type in [TeamActionType.APPROVE, TeamActionType.REJECT] else None,
+    #     forward_to_team=action_request.forward_to_team
+    # )
     
     return DocumentActionResponse(
         id=action_id,
@@ -365,53 +365,54 @@ async def take_document_action(
     )
 
 
-async def _notify_action_performed(
-    document_id: str,
-    team: str,
-    action_type: str,
-    performed_by: str,
-    new_status: Optional[str] = None,
-    forward_to_team: Optional[str] = None
-) -> None:
-    """Send WebSocket notification when an action is performed."""
-    try:
-        from services.websocket_service import (
-            manager,
-            create_action_performed_notification,
-            create_status_changed_notification
-        )
-        
-        # Notify the current team
-        notification = create_action_performed_notification(
-            document_id=document_id,
-            team=team,
-            action_type=action_type,
-            performed_by=performed_by
-        )
-        await manager.broadcast_to_team(team, notification)
-        
-        # If status changed, send status notification
-        if new_status:
-            status_notification = create_status_changed_notification(
-                document_id=document_id,
-                team=team,
-                new_status=new_status,
-                performed_by=performed_by
-            )
-            await manager.broadcast_to_team(team, status_notification)
-        
-        # If forwarded to another team, notify that team too
-        if forward_to_team:
-            forward_notification = create_action_performed_notification(
-                document_id=document_id,
-                team=forward_to_team,
-                action_type="forwarded_to_you",
-                performed_by=performed_by
-            )
-            await manager.broadcast_to_team(forward_to_team, forward_notification)
-            
-    except Exception as e:
-        print(f"⚠️ WebSocket notification failed: {e}")
+# WebSocket notification function - REMOVED
+# async def _notify_action_performed(
+#     document_id: str,
+#     team: str,
+#     action_type: str,
+#     performed_by: str,
+#     new_status: Optional[str] = None,
+#     forward_to_team: Optional[str] = None
+# ) -> None:
+#     """Send WebSocket notification when an action is performed."""
+#     try:
+#         from services.websocket_service import (
+#             manager,
+#             create_action_performed_notification,
+#             create_status_changed_notification
+#         )
+#         
+#         # Notify the current team
+#         notification = create_action_performed_notification(
+#             document_id=document_id,
+#             team=team,
+#             action_type=action_type,
+#             performed_by=performed_by
+#         )
+#         await manager.broadcast_to_team(team, notification)
+#         
+#         # If status changed, send status notification
+#         if new_status:
+#             status_notification = create_status_changed_notification(
+#                 document_id=document_id,
+#                 team=team,
+#                 new_status=new_status,
+#                 performed_by=performed_by
+#             )
+#             await manager.broadcast_to_team(team, status_notification)
+#         
+#         # If forwarded to another team, notify that team too
+#         if forward_to_team:
+#             forward_notification = create_action_performed_notification(
+#                 document_id=document_id,
+#                 team=forward_to_team,
+#                 action_type="forwarded_to_you",
+#                 performed_by=performed_by
+#             )
+#             await manager.broadcast_to_team(forward_to_team, forward_notification)
+#             
+#     except Exception as e:
+#         print(f"⚠️ WebSocket notification failed: {e}")
 
 
 @router.post("/teams/{team_id}/documents/bulk-action")

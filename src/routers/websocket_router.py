@@ -5,6 +5,9 @@ Provides WebSocket endpoints for clients to receive real-time notifications
 about document changes, actions, and status updates.
 """
 
+import logging
+import time
+from collections import defaultdict
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
 from typing import Optional
 import json
@@ -15,7 +18,30 @@ from services.websocket_service import (
 )
 from services.auth_service import decode_access_token
 
+logger = logging.getLogger("websocket")
+
 router = APIRouter(prefix="/ws", tags=["websocket"])
+
+# Rate limiting: track connection attempts per IP
+_connection_attempts: dict[str, list[float]] = defaultdict(list)
+_MAX_CONNECTIONS_PER_MINUTE = 10
+_RATE_LIMIT_WINDOW = 60  # seconds
+
+
+def _is_rate_limited(client_ip: str) -> bool:
+    """Check if client IP has exceeded connection rate limit."""
+    now = time.time()
+    # Clean old entries
+    _connection_attempts[client_ip] = [
+        t for t in _connection_attempts[client_ip] 
+        if now - t < _RATE_LIMIT_WINDOW
+    ]
+    # Check limit
+    if len(_connection_attempts[client_ip]) >= _MAX_CONNECTIONS_PER_MINUTE:
+        return True
+    # Record this attempt
+    _connection_attempts[client_ip].append(now)
+    return False
 
 
 async def get_user_from_token(token: str) -> Optional[dict]:
@@ -68,6 +94,18 @@ async def websocket_documents(
     - {"type": "subscribe", "teams": ["team1", "team2"]} -> subscribe to additional teams
     - {"type": "unsubscribe", "teams": ["team1"]} -> unsubscribe from teams
     """
+    # Get client IP for rate limiting
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    
+    # Check rate limit before accepting
+    if _is_rate_limited(client_ip):
+        logger.warning(f"Rate limited WebSocket connection from {client_ip}")
+        await websocket.accept()
+        await websocket.close(code=1008, reason="Too many connection attempts")
+        return
+    
+    logger.info(f"WebSocket connection attempt from {client_ip}")
+    
     # Authenticate user
     user_info = None
     teams = []
@@ -76,12 +114,14 @@ async def websocket_documents(
         user_info = await get_user_from_token(token)
         if user_info:
             teams = user_info.get("teams", [])
+    
+    # Require valid token - reject unauthenticated connections
+    if not user_info:
+        logger.warning(f"Rejected unauthenticated WebSocket from {client_ip}")
+        await websocket.accept()
+        await websocket.close(code=1008, reason="Authentication required")
+        return
             
-    # If no valid token or no teams, allow connection but with no team subscriptions
-    # The client can authenticate later via message
-    if not teams:
-        teams = []  # Will only receive global broadcasts if admin
-        
     try:
         await manager.connect(
             websocket,
@@ -189,8 +229,23 @@ async def websocket_documents(
                     "type": "error",
                     "message": "Invalid JSON"
                 }))
+            except WebSocketDisconnect:
+                # Client closed the connection; exit loop quietly
+                break
+            except Exception as e:
+                logger.exception("WebSocket handler error")
+                # Do not attempt to send on a possibly closed socket
+                break
+    except WebSocketDisconnect:
+        await manager.disconnect(websocket)
+    except Exception:
+        logger.exception("WebSocket connection error")
+        await manager.disconnect(websocket)
                 
     except WebSocketDisconnect:
+        await manager.disconnect(websocket)
+    except Exception:
+        logger.exception("WebSocket connection error")
         await manager.disconnect(websocket)
 
 

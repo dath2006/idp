@@ -12,7 +12,7 @@ load_dotenv()
 from routers import users, webhooks
 from routers import privacy_documents  # Privacy-first router (DEFAULT)
 from routers import team_documents  # Team-based document access
-from routers import websocket_router  # Real-time WebSocket updates
+# from routers import websocket_router  # Real-time WebSocket updates - REMOVED
 # Legacy router - comment out to disable LLM-based processing
 # from routers import documents as legacy_documents
 
@@ -241,8 +241,8 @@ app.include_router(
     tags=["Team Documents"]
 )
 
-# WebSocket for real-time updates
-app.include_router(websocket_router.router, tags=["WebSocket"])
+# WebSocket for real-time updates - REMOVED
+# app.include_router(websocket_router.router, tags=["WebSocket"])
 
 # Webhooks (Telegram, Email) - routes to privacy system
 app.include_router(webhooks.router, prefix="/api/v1", tags=["Webhooks"])
@@ -272,7 +272,6 @@ def root():
             "MongoDB Metadata Storage",
             "No LLM Access to Document Content",
             "Team-Based Document Access",
-            "Real-time WebSocket Updates",
             "JWT Authentication"
         ],
         "endpoints": {
@@ -281,7 +280,6 @@ def root():
             "teams": "/api/v1/teams/{team}/documents",
             "users": "/api/v1/users",
             "webhooks": "/api/v1/webhooks",
-            "websocket": "/ws/documents",
             "health": "/api/v1/privacy/health"
         }
     }
