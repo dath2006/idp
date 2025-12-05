@@ -316,6 +316,7 @@ class PrivacyOrchestrator:
         
         routed_to = []
         department_emails = []
+        assigned_teams = []
         
         # Route to ALL matched categories (multilabel)
         for category in classification.categories:
@@ -349,12 +350,27 @@ class PrivacyOrchestrator:
             
             routed_to.append(dept_config.name)
             department_emails.append(dept_config.email)
+            assigned_teams.append(dept_id.value)
             
             print(f"📨 Routed to {dept_config.name}: {doc.filename}")
         
         # If no departments were routed to, request human review
         if not routed_to:
             return await self._request_human_review(doc, document_id, classification)
+        
+        # Update assigned_teams in document metadata
+        await mongodb.update_document(document_id, {
+            "assigned_teams": assigned_teams,
+            "team_status": {team: "pending" for team in assigned_teams}
+        })
+        
+        # Send WebSocket notifications to all assigned teams
+        await self._notify_teams_document_created(
+            document_id=document_id,
+            teams=assigned_teams,
+            title=doc.filename,
+            categories=classification.category_names
+        )
         
         return PrivacyProcessingResult(
             success=True,
@@ -367,6 +383,33 @@ class PrivacyOrchestrator:
             department_emails=department_emails,
             status="routed"
         )
+    
+    async def _notify_teams_document_created(
+        self,
+        document_id: str,
+        teams: List[str],
+        title: str,
+        categories: List[str]
+    ) -> None:
+        """Send WebSocket notifications to all assigned teams."""
+        try:
+            from services.websocket_service import (
+                manager,
+                create_document_created_notification
+            )
+            
+            # Send notification to each team
+            for team in teams:
+                notification = create_document_created_notification(
+                    document_id=document_id,
+                    team=team,
+                    title=title,
+                    categories=categories
+                )
+                await manager.broadcast_to_team(team, notification)
+                
+        except Exception as e:
+            print(f"⚠️ WebSocket notification failed: {e}")
     
     def _category_to_department(
         self, 

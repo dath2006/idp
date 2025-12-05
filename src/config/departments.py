@@ -40,7 +40,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.ENGINEERING,
         name="Engineering",
         description="Handles technical documents, CAD files, BIM models, and engineering specifications",
-        email="engineering@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "engineering", "technical", "design", "CAD", "BIM", "specification",
             "drawing", "blueprint", "schematic", "mechanical", "electrical",
@@ -55,7 +55,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.FINANCE,
         name="Finance",
         description="Handles invoices, budgets, financial reports, and payment documents",
-        email="finance@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "invoice", "payment", "budget", "cost", "expense", "financial",
             "billing", "receipt", "purchase order", "PO", "quote", "estimate",
@@ -69,7 +69,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.PROCUREMENT,
         name="Procurement",
         description="Handles RFPs, vendor documents, contracts, and supply chain materials",
-        email="procurement@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "procurement", "vendor", "supplier", "RFP", "RFQ", "bid",
             "contract", "agreement", "purchase", "supply", "material",
@@ -83,7 +83,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.HR,
         name="Human Resources",
         description="Handles employee documents, policies, training materials, and personnel records",
-        email="hr@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "employee", "HR", "human resources", "personnel", "hiring",
             "recruitment", "training", "policy", "handbook", "benefits",
@@ -97,7 +97,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.OPERATIONS,
         name="Operations",
         description="Handles operational procedures, maintenance logs, and field reports",
-        email="operations@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "operations", "maintenance", "field", "site", "inspection",
             "schedule", "work order", "task", "procedure", "SOP",
@@ -111,7 +111,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.SAFETY,
         name="Safety",
         description="Handles safety documents, incident reports, and compliance materials",
-        email="safety@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "safety", "incident", "accident", "hazard", "risk", "OSHA",
             "PPE", "emergency", "evacuation", "first aid", "injury",
@@ -125,7 +125,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.COMPLIANCE,
         name="Compliance",
         description="Handles regulatory documents, permits, certifications, and audit materials",
-        email="compliance@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "compliance", "regulation", "permit", "license", "certification",
             "audit", "inspection", "standard", "code", "requirement",
@@ -139,7 +139,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.LEGAL,
         name="Legal",
         description="Handles legal documents, contracts, and dispute-related materials",
-        email="legal@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "legal", "law", "attorney", "contract", "agreement", "lawsuit",
             "litigation", "dispute", "claim", "liability", "indemnity",
@@ -153,7 +153,7 @@ DEPARTMENTS: Dict[Department, DepartmentConfig] = {
         id=Department.MANAGEMENT,
         name="Management",
         description="Handles executive reports, strategic documents, and high-level summaries",
-        email="management@company.com",
+        email="sathishdutt0@gmail.com",
         keywords=[
             "executive", "management", "strategy", "summary", "report",
             "dashboard", "KPI", "metrics", "performance", "quarterly",

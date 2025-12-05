@@ -60,6 +60,40 @@ class HumanReviewReason(str, Enum):
     MANUAL_REVIEW_REQUESTED = "manual_review_requested"
 
 
+class DocumentPriority(str, Enum):
+    """Priority level of a document."""
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class TeamActionType(str, Enum):
+    """Types of actions a team member can take on a document."""
+    VIEW = "view"
+    APPROVE = "approve"
+    REJECT = "reject"
+    FORWARD = "forward"
+    COMMENT = "comment"
+    DOWNLOAD = "download"
+    ARCHIVE = "archive"
+
+
+class TeamStatus(str, Enum):
+    """Status of a document for a specific team."""
+    PENDING = "pending"
+    IN_REVIEW = "in_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    FORWARDED = "forwarded"
+
+
+class UserRole(str, Enum):
+    """User role levels."""
+    ADMIN = "admin"
+    MEMBER = "member"
+    VIEWER = "viewer"
+
+
 # ============================================================
 # MongoDB Document Models (Pydantic)
 # ============================================================
@@ -98,6 +132,55 @@ class HumanReviewRequest(BaseModel):
     review_notes: Optional[str] = None
 
 
+class TeamStatusRecord(BaseModel):
+    """Status of document for a specific team."""
+    team: str
+    status: TeamStatus = TeamStatus.PENDING
+    assigned_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_by: Optional[str] = None
+
+
+class DocumentAction(BaseModel):
+    """Action taken on a document by a team member."""
+    id: Optional[str] = Field(default=None, alias="_id")
+    document_id: str
+    action_type: TeamActionType
+    performed_by: str  # user_id
+    performed_by_name: str  # user display name
+    team: str
+    comment: Optional[str] = None
+    forwarded_to: Optional[str] = None  # team name if forwarded
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    class Config:
+        populate_by_name = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class User(BaseModel):
+    """User model for authentication and team membership."""
+    id: Optional[str] = Field(default=None, alias="_id")
+    email: str
+    password_hash: str
+    name: str
+    teams: List[str] = Field(default_factory=list)  # Team memberships
+    role: UserRole = UserRole.MEMBER
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_login: Optional[datetime] = None
+    
+    class Config:
+        populate_by_name = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }
+
+
 class DocumentMetadata(BaseModel):
     """
     Complete metadata record for a document.
@@ -118,10 +201,21 @@ class DocumentMetadata(BaseModel):
     origin: FileOrigin
     
     # Classification (from DistilBERT, not LLM)
-    classification_category: Optional[str] = None
+    classification_category: Optional[str] = None  # Comma-separated for multilabel
+    classification_categories: List[str] = Field(default_factory=list)  # List of categories
     classification_confidence: Optional[float] = None
-    classification_model: str = "distilbert-custom"
+    classification_model: str = "multilabel-tfidf"
     classified_at: Optional[datetime] = None
+    
+    # Team assignment (from classification)
+    assigned_teams: List[str] = Field(default_factory=list)  # Teams this doc is assigned to
+    team_statuses: List[TeamStatusRecord] = Field(default_factory=list)  # Status per team
+    
+    # Priority and archival
+    priority: DocumentPriority = DocumentPriority.MEDIUM
+    is_archived: bool = False
+    archived_at: Optional[datetime] = None
+    archived_by: Optional[str] = None
     
     # Routing
     status: DocumentStatus = DocumentStatus.RECEIVED
@@ -185,9 +279,37 @@ class MongoDBService:
         # Index for classification
         await documents.create_index("classification_category")
         
+        # Index for team-based queries
+        await documents.create_index("assigned_teams")
+        
+        # Index for archived documents
+        await documents.create_index("is_archived")
+        
         # Compound index for review queue
         await documents.create_index([
             ("status", 1),
+            ("created_at", -1)
+        ])
+        
+        # Compound index for team + status queries
+        await documents.create_index([
+            ("assigned_teams", 1),
+            ("status", 1),
+            ("is_archived", 1)
+        ])
+        
+        # Users collection indexes
+        users = self._db["users"]
+        await users.create_index("email", unique=True)
+        await users.create_index("teams")
+        
+        # Document actions collection indexes
+        actions = self._db["document_actions"]
+        await actions.create_index("document_id")
+        await actions.create_index("team")
+        await actions.create_index("performed_by")
+        await actions.create_index([
+            ("document_id", 1),
             ("created_at", -1)
         ])
     
@@ -212,6 +334,20 @@ class MongoDBService:
         if self._db is None:
             raise RuntimeError("MongoDB not connected. Call connect() first.")
         return self._db["review_queue"]
+    
+    @property
+    def users(self) -> AsyncIOMotorCollection:
+        """Get the users collection."""
+        if self._db is None:
+            raise RuntimeError("MongoDB not connected. Call connect() first.")
+        return self._db["users"]
+    
+    @property
+    def document_actions(self) -> AsyncIOMotorCollection:
+        """Get the document actions collection."""
+        if self._db is None:
+            raise RuntimeError("MongoDB not connected. Call connect() first.")
+        return self._db["document_actions"]
     
     # ============================================================
     # Document CRUD Operations
@@ -454,6 +590,273 @@ class MongoDBService:
             "pending_review": pending_review,
             "by_status": status_counts,
             "by_source": source_counts
+        }
+    
+    # ============================================================
+    # User Operations
+    # ============================================================
+    
+    async def create_user(self, user: User) -> str:
+        """Create a new user."""
+        user_dict = user.model_dump(by_alias=True, exclude={"id"})
+        user_dict["created_at"] = datetime.utcnow()
+        
+        result = await self.users.insert_one(user_dict)
+        return str(result.inserted_id)
+    
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        """Get a user by email."""
+        doc = await self.users.find_one({"email": email})
+        if doc:
+            doc["_id"] = str(doc["_id"])
+            return User(**doc)
+        return None
+    
+    async def get_user_by_id(self, user_id: str) -> Optional[User]:
+        """Get a user by ID."""
+        doc = await self.users.find_one({"_id": ObjectId(user_id)})
+        if doc:
+            doc["_id"] = str(doc["_id"])
+            return User(**doc)
+        return None
+    
+    async def update_user_login(self, user_id: str) -> bool:
+        """Update user's last login time."""
+        result = await self.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"last_login": datetime.utcnow()}}
+        )
+        return result.modified_count > 0
+    
+    async def get_users_by_team(self, team: str) -> List[User]:
+        """Get all users in a team."""
+        cursor = self.users.find({"teams": team, "is_active": True})
+        users = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            users.append(User(**doc))
+        return users
+    
+    async def get_all_users(self) -> List[User]:
+        """Get all active users."""
+        cursor = self.users.find({"is_active": True})
+        users = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            users.append(User(**doc))
+        return users
+    
+    # ============================================================
+    # Document Action Operations
+    # ============================================================
+    
+    async def create_action(self, action: DocumentAction) -> str:
+        """Record a document action."""
+        action_dict = action.model_dump(by_alias=True, exclude={"id"})
+        action_dict["created_at"] = datetime.utcnow()
+        
+        result = await self.document_actions.insert_one(action_dict)
+        return str(result.inserted_id)
+    
+    async def get_document_actions(
+        self,
+        document_id: str,
+        limit: int = 50
+    ) -> List[DocumentAction]:
+        """Get actions for a document."""
+        cursor = self.document_actions.find(
+            {"document_id": document_id}
+        ).sort("created_at", -1).limit(limit)
+        
+        actions = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            actions.append(DocumentAction(**doc))
+        return actions
+    
+    async def get_team_actions(
+        self,
+        team: str,
+        limit: int = 100
+    ) -> List[DocumentAction]:
+        """Get recent actions for a team."""
+        cursor = self.document_actions.find(
+            {"team": team}
+        ).sort("created_at", -1).limit(limit)
+        
+        actions = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            actions.append(DocumentAction(**doc))
+        return actions
+    
+    # ============================================================
+    # Team-Based Document Operations
+    # ============================================================
+    
+    async def get_documents_by_team(
+        self,
+        team: str,
+        status: Optional[str] = None,
+        include_archived: bool = False,
+        limit: int = 100,
+        skip: int = 0
+    ) -> List[DocumentMetadata]:
+        """Get documents assigned to a specific team."""
+        query = {"assigned_teams": team}
+        
+        if not include_archived:
+            query["is_archived"] = False
+        
+        if status:
+            query["team_statuses"] = {
+                "$elemMatch": {"team": team, "status": status}
+            }
+        
+        cursor = self.documents.find(query).sort(
+            "created_at", -1
+        ).skip(skip).limit(limit)
+        
+        documents = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            documents.append(DocumentMetadata(**doc))
+        return documents
+    
+    async def count_documents_by_team(
+        self,
+        team: str,
+        include_archived: bool = False
+    ) -> int:
+        """Count documents assigned to a team."""
+        query = {"assigned_teams": team}
+        if not include_archived:
+            query["is_archived"] = False
+        return await self.documents.count_documents(query)
+    
+    async def update_team_status(
+        self,
+        document_id: str,
+        team: str,
+        status: TeamStatus,
+        updated_by: str
+    ) -> bool:
+        """Update the status of a document for a specific team."""
+        now = datetime.utcnow()
+        
+        # First, try to update existing team status
+        result = await self.documents.update_one(
+            {
+                "_id": ObjectId(document_id),
+                "team_statuses.team": team
+            },
+            {
+                "$set": {
+                    "team_statuses.$.status": status.value,
+                    "team_statuses.$.updated_at": now,
+                    "team_statuses.$.updated_by": updated_by,
+                    "updated_at": now
+                }
+            }
+        )
+        
+        if result.modified_count == 0:
+            # Team status doesn't exist, add it
+            new_status = TeamStatusRecord(
+                team=team,
+                status=status,
+                updated_by=updated_by
+            )
+            result = await self.documents.update_one(
+                {"_id": ObjectId(document_id)},
+                {
+                    "$push": {"team_statuses": new_status.model_dump()},
+                    "$set": {"updated_at": now}
+                }
+            )
+        
+        return result.modified_count > 0
+    
+    async def set_assigned_teams(
+        self,
+        document_id: str,
+        teams: List[str]
+    ) -> bool:
+        """Set the assigned teams for a document."""
+        now = datetime.utcnow()
+        
+        # Create initial team statuses
+        team_statuses = [
+            TeamStatusRecord(team=team).model_dump()
+            for team in teams
+        ]
+        
+        result = await self.documents.update_one(
+            {"_id": ObjectId(document_id)},
+            {
+                "$set": {
+                    "assigned_teams": teams,
+                    "team_statuses": team_statuses,
+                    "classification_categories": teams,
+                    "updated_at": now
+                }
+            }
+        )
+        return result.modified_count > 0
+    
+    async def archive_document(
+        self,
+        document_id: str,
+        archived_by: str
+    ) -> bool:
+        """Archive a document."""
+        result = await self.documents.update_one(
+            {"_id": ObjectId(document_id)},
+            {
+                "$set": {
+                    "is_archived": True,
+                    "archived_at": datetime.utcnow(),
+                    "archived_by": archived_by,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        return result.modified_count > 0
+    
+    async def get_team_statistics(self, team: str) -> Dict[str, Any]:
+        """Get statistics for a specific team."""
+        base_query = {"assigned_teams": team, "is_archived": False}
+        
+        # Total documents
+        total = await self.documents.count_documents(base_query)
+        
+        # By team status
+        pipeline = [
+            {"$match": base_query},
+            {"$unwind": "$team_statuses"},
+            {"$match": {"team_statuses.team": team}},
+            {"$group": {
+                "_id": "$team_statuses.status",
+                "count": {"$sum": 1}
+            }}
+        ]
+        
+        status_counts = {}
+        async for doc in self.documents.aggregate(pipeline):
+            status_counts[doc["_id"]] = doc["count"]
+        
+        # Pending count
+        pending = status_counts.get("pending", 0)
+        
+        return {
+            "team": team,
+            "total_documents": total,
+            "pending": pending,
+            "in_review": status_counts.get("in_review", 0),
+            "approved": status_counts.get("approved", 0),
+            "rejected": status_counts.get("rejected", 0),
+            "forwarded": status_counts.get("forwarded", 0),
+            "by_status": status_counts
         }
 
 
